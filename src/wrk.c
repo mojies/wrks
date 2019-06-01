@@ -15,6 +15,8 @@ static struct config {
     bool     latency;
     char    *host;
     char    *script;
+    char    *cacert;
+    char    *cert;
     SSL_CTX *ctx;
 } cfg;
 
@@ -52,6 +54,8 @@ static void usage() {
            "    -H, --header      <H>  Add header to request      \n"
            "        --latency          Print latency statistics   \n"
            "        --timeout     <T>  Socket/request timeout     \n"
+           "        --cacert      <T>  CA path                    \n"
+           "        --cert        <T>  Client Certificate         \n"
            "    -v, --version          Print version details      \n"
            "                                                      \n"
            "  Numeric arguments may include a SI unit (1k, 1M, 1G)\n"
@@ -62,6 +66,7 @@ int main(int argc, char **argv) {
     char *url, **headers = zmalloc(argc * sizeof(char *));
     struct http_parser_url parts = {};
 
+    memset( &cfg, 0x00, sizeof( struct config ) );
     if (parse_args(&cfg, &url, &parts, headers, argc, argv)) {
         usage();
         exit(1);
@@ -73,12 +78,18 @@ int main(int argc, char **argv) {
     char *service = port ? port : schema;
 
     if (!strncmp("https", schema, 5)) {
-        if ((cfg.ctx = ssl_init()) == NULL) {
+        if( ( cfg.cacert != 0 )||( cfg.cert != 0 ) ){
+            cfg.ctx = ssl_init_v2( cfg.cacert, cfg.cert );
+            sock.connect  = ssl_connect;
+        }else{
+            cfg.ctx = ssl_init();
+            sock.connect  = ssl_connect_v2;
+        }
+        if( cfg.ctx == NULL ){
             fprintf(stderr, "unable to initialize SSL\n");
             ERR_print_errors_fp(stderr);
             exit(1);
         }
-        sock.connect  = ssl_connect;
         sock.close    = ssl_close;
         sock.read     = ssl_read;
         sock.write    = ssl_write;
@@ -476,6 +487,8 @@ static struct option longopts[] = {
     { "timeout",     required_argument, NULL, 'T' },
     { "help",        no_argument,       NULL, 'h' },
     { "version",     no_argument,       NULL, 'v' },
+    { "cacert",      required_argument, NULL, 1000 },
+    { "cert",        required_argument, NULL, 1001 },
     { NULL,          0,                 NULL,  0  }
 };
 
@@ -516,6 +529,12 @@ static int parse_args(struct config *cfg, char **url, struct http_parser_url *pa
             case 'v':
                 printf("wrk %s [%s] ", VERSION, aeGetApiName());
                 printf("Copyright (C) 2012 Will Glozer\n");
+                break;
+            case 1000:
+                cfg->cacert = optarg;
+                break;
+            case 1001:
+                cfg->cert = optarg;
                 break;
             case 'h':
             case '?':
